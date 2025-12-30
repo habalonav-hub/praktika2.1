@@ -3,50 +3,133 @@ import schedule
 import time
 from email.message import EmailMessage
 import json
+import logging
+from datetime import datetime
 
-CONFIG = {
-    "smtp_server": "smtp.gmail.com",
-    "smtp_port": 587,
-    "email": "your_email@gmail.com",
-    "password": "your_app_password",
-    "schedule_time": "09:00"
-}
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(message)s'
+)
 
-with open('users.json', 'r') as f:
-    users = json.load(f)
-
-def send_email(to_email, subject, body):
-    msg = EmailMessage()
-    msg['From'] = CONFIG['email']
-    msg['To'] = to_email
-    msg['Subject'] = subject
-    msg.set_content(body)
-    
-    with smtplib.SMTP(CONFIG['smtp_server'], CONFIG['smtp_port']) as server:
-        server.starttls()
-        server.login(CONFIG['email'], CONFIG['password'])
-        server.send_message(msg)
-    print(f"Отправлено: {to_email}")
-
-def send_notifications():
-    print(f"Начало рассылки в {time.strftime('%H:%M')}")
-    
-    for user in users:
-        name = user.get('name', 'Пользователь')
-        email = user['email']
+class EmailNotifier:
+    def __init__(self):
+        self.load_settings()
         
-        subject = "Ежедневное уведомление"
-        body = f"Здравствуйте, {name}!\n\nЭто автоматическое уведомление.\n\nС уважением,\nСистема"
-        
+    def load_settings(self):
+        with open('config.json', 'r') as f:
+            self.config = json.load(f)
+        with open('users.json', 'r') as f:
+            self.users = json.load(f)
+    
+    def test_connection(self):
         try:
-            send_email(email, subject, body)
+            server = smtplib.SMTP(self.config['smtp_server'], self.config['smtp_port'])
+            server.starttls()
+            server.login(self.config['email'], self.config['password'])
+            server.quit()
+            return True
         except Exception as e:
-            print(f"Ошибка для {email}: {e}")
+            logging.error(f"Connection error: {e}")
+            return False
+    
+    def send_email(self, recipient_email, recipient_name):
+        try:
+            msg = EmailMessage()
+            msg['From'] = self.config['email']
+            msg['To'] = recipient_email
+            msg['Subject'] = f"Ежедневное уведомление - {datetime.now().strftime('%d.%m.%Y')}"
+            
+            body = f"""Уважаемый(ая) {recipient_name},
 
-schedule.every().day.at(CONFIG['schedule_time']).do(send_notifications)
+Это автоматическое уведомление.
+Время отправки: {datetime.now().strftime('%H:%M')}
 
-print(f"Сервис запущен. Рассылка в {CONFIG['schedule_time']}")
+С уважением,
+Автоматическая система"""
+            msg.set_content(body)
+            
+            with smtplib.SMTP(self.config['smtp_server'], self.config['smtp_port']) as server:
+                server.starttls()
+                server.login(self.config['email'], self.config['password'])
+                server.send_message(msg)
+            
+            logging.info(f"Email sent to {recipient_email}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to send to {recipient_email}: {e}")
+            return False
+    
+    def send_bulk_emails(self):
+        logging.info("Starting bulk email sending...")
+        success_count = 0
+        total_count = len(self.users)
+        
+        for user in self.users:
+            if self.send_email(user['email'], user['name']):
+                success_count += 1
+            time.sleep(1) 
+            
+        logging.info(f"Completed: {success_count}/{total_count} emails sent")
+        return success_count
+    
+    def scheduled_task(self):
+        logging.info("Executing scheduled task")
+        self.send_bulk_emails()
+    
+    def show_menu(self):
+        print("\n" + "="*50)
+        print("EMAIL NOTIFICATION SYSTEM")
+        print("="*50)
+        print("\n1. Send test email")
+        print("2. Send to all users")
+        print("3. Start scheduled service")
+        print("4. Test SMTP connection")
+        print("5. Exit")
+    
+    def run(self):
+        while True:
+            self.show_menu()
+            choice = input("\nSelect option: ")
+            
+            if choice == '1':
+                email = input("Enter email: ")
+                name = input("Enter name: ")
+                self.send_email(email, name)
+            
+            elif choice == '2':
+                self.send_bulk_emails()
+            
+            elif choice == '3':
+                schedule_time = self.config.get('schedule_time', '09:00')
+                schedule.every().day.at(schedule_time).do(self.scheduled_task)
+                
+                print(f"\nService started. Sending at {schedule_time} daily")
+                print("Press Ctrl+C to stop\n")
+                
+                self.scheduled_task()
+                
+                try:
+                    while True:
+                        schedule.run_pending()
+                        time.sleep(60)
+                except KeyboardInterrupt:
+                    print("\nService stopped")
+            
+            elif choice == '4':
+                if self.test_connection():
+                    print("✓ SMTP connection successful")
+                else:
+                    print("✗ SMTP connection failed")
+            
+            elif choice == '5':
+                print("Goodbye!")
+                break
+            
+            else:
+                print("Invalid option")
+            
+            input("\nPress Enter to continue...")
 
-while True:
-    schedule.run_pending()
-    time.sleep(60)
+if __name__ == "__main__":
+    notifier = EmailNotifier()
+    notifier.run()
